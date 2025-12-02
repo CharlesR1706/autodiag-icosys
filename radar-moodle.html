@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #1a535c;
+      --accent-color: #4ecdc4;
+      --bg-color: #f7f9fc;
+      --text-color: #2c3e50;
+    }
+    body { font-family: 'Roboto', sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; }
+    
+    .container {
+      max-width: 800px; margin: 0 auto; background: white;
+      padding: 30px; border-radius: 15px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+    }
+
+    h1 { text-align: center; color: var(--primary-color); font-size: 1.8rem; margin-bottom: 5px; }
+    .date-badge { text-align: center; font-size: 0.9rem; color: #7f8c8d; margin-bottom: 30px; }
+
+    .chart-wrapper {
+      position: relative; height: 350px; width: 100%; margin-bottom: 40px;
+    }
+
+    .levers-list { display: flex; flex-direction: column; gap: 15px; }
+    
+    .lever-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 15px; border-radius: 8px; background: #fff;
+      border: 1px solid #edf2f7;
+    }
+    
+    .lever-info { flex: 1; padding-right: 15px; }
+    .lever-name { font-weight: 500; font-size: 1rem; margin-bottom: 5px; }
+    
+    .lever-visual { width: 40%; max-width: 200px; }
+    .score-val { text-align: right; font-weight: 700; font-size: 1.1rem; color: var(--primary-color); }
+    
+    .progress-track {
+      background-color: #e2e8f0; height: 8px; border-radius: 4px;
+      overflow: hidden; margin-top: 5px;
+    }
+    .progress-fill { height: 100%; transition: width 1s ease-out; }
+
+    .low { background-color: #e74c3c; }
+    .med { background-color: #f1c40f; }
+    .high { background-color: #27ae60; }
+
+    .hidden { display: none; }
+    .loader { text-align: center; padding: 40px; color: #bdc3c7; }
+    .error-box { background: #fee2e2; color: #c0392b; padding: 15px; border-radius: 8px; text-align: center; }
+    
+    .welcome-box { 
+      background: linear-gradient(135deg, #e8f5f3 0%, #d4edea 100%); 
+      color: var(--primary-color); 
+      padding: 40px 30px; 
+      border-radius: 12px; 
+      text-align: center;
+      border: 1px solid #b8ddd6;
+    }
+    .welcome-box h2 { margin: 0 0 15px 0; font-size: 1.4rem; }
+    .welcome-box p { margin: 0; font-size: 1rem; line-height: 1.6; color: #4a6670; }
+    .welcome-icon { font-size: 3rem; margin-bottom: 15px; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Résultats Autodiagnostic</h1>
+    <div id="dateTag" class="date-badge">Chargement...</div>
+
+    <div id="loader" class="loader">Analyse des données en cours...</div>
+    <div id="error" class="error-box hidden"></div>
+    <div id="welcome" class="welcome-box hidden">
+      <div class="welcome-icon">📋</div>
+      <h2>Bienvenue dans l'autodiagnostic</h2>
+      <p>Vous n'avez pas encore complété l'autodiagnostic.<br>
+      Veuillez d'abord répondre au questionnaire pour visualiser vos résultats.</p>
+    </div>
+
+    <div id="content" class="hidden">
+      <div class="chart-wrapper">
+        <canvas id="radarChart"></canvas>
+      </div>
+
+      <hr style="border:0; border-top:1px solid #eee; margin: 30px 0;">
+
+      <div id="jauges" class="levers-list">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =============================================================================
+    // CONFIGURATION - À MODIFIER
+    // =============================================================================
+    
+    // URL du Google Sheet publié (Fichier > Partager > Publier sur le web > CSV)
+    // REMPLACE CETTE URL par la tienne !
+    var SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/XXXXXX/pub?gid=YYYYYY&single=true&output=csv";
+    
+    // Récupère l'email depuis l'URL (passé par Moodle via {email})
+    var userEmail = getUrlParameter('email');
+    
+    // Configuration des leviers (doit correspondre aux en-têtes de ta feuille Scores)
+    var LEVERS = [
+      { id: "lev_02", label: "Alternance des périodes de semis et des cultures" },
+      { id: "lev_03", label: "Alternance des methodes d'implantation" },
+      { id: "lev_04", label: "Optimisation de la competitivite de la culture" },
+      { id: "lev_05", label: "Réduction du stock d'organes de reproduction en interculture" },
+      { id: "lev_06", label: "Couverture en interculture" },
+      { id: "lev_07", label: "Interception des semences en culture avant le retour au sol" },
+      { id: "lev_08", label: "Réduction des contaminations" },
+      { id: "lev_09", label: "Désherbage mécanique" },
+      { id: "lev_10", label: "Désherbage chimique" }
+    ];
+
+    // =============================================================================
+    // CODE PRINCIPAL
+    // =============================================================================
+
+    function getUrlParameter(name) {
+      var urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get(name) || "";
+    }
+
+    window.onload = function() {
+      if (!userEmail) {
+        showWelcome();
+        return;
+      }
+      
+      // Charger les données depuis le Google Sheet publié
+      Papa.parse(SHEET_CSV_URL, {
+        download: true,
+        header: false,
+        complete: function(results) {
+          processData(results.data);
+        },
+        error: function(err) {
+          showError("Impossible de charger les données : " + err.message);
+        }
+      });
+    };
+
+    function processData(data) {
+      if (!data || data.length < 4) {
+        showError("Données insuffisantes dans la feuille Scores.");
+        return;
+      }
+
+      // Ligne 1 = Leviers (en-têtes)
+      // Ligne 2 = Numéros de questions  
+      // Ligne 3 = Intitulés des questions
+      // Ligne 4+ = Données
+      
+      var headers = data[0];  // Noms des leviers
+      var emailColIndex = findEmailColumn(headers);
+      
+      if (emailColIndex === -1) {
+        showError("Colonne Email introuvable.");
+        return;
+      }
+
+      // Chercher la ligne de l'utilisateur (la plus récente = depuis la fin)
+      var studentRow = null;
+      for (var i = data.length - 1; i >= 3; i--) {
+        var row = data[i];
+        if (row[emailColIndex] && row[emailColIndex].toString().trim().toLowerCase() === userEmail.trim().toLowerCase()) {
+          studentRow = row;
+          break;
+        }
+      }
+
+      if (!studentRow) {
+        showWelcome();
+        return;
+      }
+
+      // Agréger les scores par levier
+      var leverScores = {};
+      LEVERS.forEach(function(l) { leverScores[l.label] = 0; });
+
+      for (var col = 0; col < headers.length; col++) {
+        var headerName = headers[col] ? headers[col].toString().trim() : "";
+        if (leverScores.hasOwnProperty(headerName)) {
+          var val = parseFloat(studentRow[col]) || 0;
+          leverScores[headerName] += val;
+        }
+      }
+
+      // Préparer les résultats
+      var results = LEVERS.map(function(l) {
+        var score = Math.round(leverScores[l.label]);
+        if (score > 100) score = 100;
+        if (score < 0) score = 0;
+        return { label: l.label, score: score };
+      });
+
+      // Date (première colonne)
+      var dateStr = studentRow[0] || "Date inconnue";
+
+      showResults(results, dateStr);
+    }
+
+    function findEmailColumn(headers) {
+      for (var i = 0; i < headers.length; i++) {
+        if (headers[i] && headers[i].toString().toLowerCase().indexOf("mail") > -1) {
+          return i;
+        }
+      }
+      return 1; // Fallback colonne B
+    }
+
+    function showResults(results, dateStr) {
+      document.getElementById('loader').classList.add('hidden');
+      document.getElementById('dateTag').innerText = "Dernière évaluation le " + dateStr;
+
+      var labels = [];
+      var dataScores = [];
+      var html = "";
+
+      results.forEach(function(r) {
+        labels.push(shortLabel(r.label));
+        dataScores.push(r.score);
+
+        var color = r.score < 33 ? 'low' : (r.score < 66 ? 'med' : 'high');
+
+        html += '<div class="lever-item">' +
+                  '<div class="lever-info">' +
+                    '<div class="lever-name">' + escapeHtml(r.label) + '</div>' +
+                  '</div>' +
+                  '<div class="lever-visual">' +
+                    '<div class="score-val">' + r.score + '%</div>' +
+                    '<div class="progress-track">' +
+                      '<div class="progress-fill ' + color + '" style="width: ' + r.score + '%"></div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>';
+      });
+
+      document.getElementById('jauges').innerHTML = html;
+      document.getElementById('content').classList.remove('hidden');
+
+      drawRadar(labels, dataScores);
+    }
+
+    function drawRadar(labels, data) {
+      var ctx = document.getElementById('radarChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Performance (%)',
+            data: data,
+            backgroundColor: 'rgba(26, 83, 92, 0.2)',
+            borderColor: '#1a535c',
+            pointBackgroundColor: '#1a535c',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              min: 0, max: 100,
+              ticks: { stepSize: 20, display: false },
+              pointLabels: { font: { size: 11 } }
+            }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+
+    function shortLabel(str) {
+      return str.length > 25 ? str.substring(0, 23) + "..." : str;
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showWelcome() {
+      document.getElementById('loader').classList.add('hidden');
+      document.getElementById('dateTag').classList.add('hidden');
+      document.getElementById('welcome').classList.remove('hidden');
+    }
+
+    function showError(msg) {
+      document.getElementById('loader').classList.add('hidden');
+      document.getElementById('dateTag').classList.add('hidden');
+      var div = document.getElementById('error');
+      div.innerText = "Erreur : " + msg;
+      div.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
