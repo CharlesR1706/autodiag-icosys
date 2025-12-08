@@ -101,8 +101,9 @@
     // CONFIGURATION - À MODIFIER
     // =============================================================================
     
-    // URL du Google Sheet publié
-    var SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSIf4mDGh91M6e3WmbmsU9TrwBeJ3aSNhcplGIEGRVCXsOCrphvm0OGULQrSsRcT6zCrkYiioLwpa_v/pub?gid=80915653&single=true&output=csv";
+    // URL du Google Sheet publié (Fichier > Partager > Publier sur le web > CSV)
+    // REMPLACE CETTE URL par la tienne !
+    var SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/XXXXXX/pub?gid=YYYYYY&single=true&output=csv";
     
     // Récupère l'email depuis l'URL (passé par Moodle via {email})
     var userEmail = getUrlParameter('email');
@@ -112,12 +113,13 @@
       { id: "lev_02", label: "Alternance des périodes de semis et des cultures" },
       { id: "lev_03", label: "Alternance des methodes d'implantation" },
       { id: "lev_04", label: "Optimisation de la competitivite de la culture" },
-      { id: "lev_05", label: "Réduction du stock d'organes de reproduction en interculture" },
-      { id: "lev_06", label: "Couverture en interculture" },
-      { id: "lev_07", label: "Interception des semences en culture avant le retour au sol" },
-      { id: "lev_08", label: "Réduction des contaminations" },
-      { id: "lev_09", label: "Désherbage mécanique" },
-      { id: "lev_10", label: "Désherbage chimique" }
+      { id: "lev_05", label: "Réduction du stock semencier en interculture" },
+      { id: "lev_06", label: "Réduction du stock d'organes souterrains en interculture" },
+      { id: "lev_07", label: "Couverture en interculture" },
+      { id: "lev_08", label: "Interception des semences en culture avant le retour au sol" },
+      { id: "lev_09", label: "Réduction des contaminations" },
+      { id: "lev_10", label: "Désherbage mécanique" },
+      { id: "lev_11", label: "Désherbage chimique" }
     ];
 
     // =============================================================================
@@ -305,5 +307,4 @@
     }
   </script>
 </body>
-
 </html>
