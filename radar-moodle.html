@@ -67,6 +67,57 @@
     .welcome-box h2 { margin: 0 0 15px 0; font-size: 1.4rem; }
     .welcome-box p { margin: 0; font-size: 1rem; line-height: 1.6; color: #4a6670; }
     .welcome-icon { font-size: 3rem; margin-bottom: 15px; }
+
+    /* Bouton actualiser et status */
+    .refresh-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 10px 15px;
+      background: #f0f4f5;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .refresh-status {
+      color: #7f8c8d;
+    }
+    .refresh-status.updating {
+      color: var(--primary-color);
+    }
+    .refresh-btn {
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .refresh-btn:hover {
+      background: #2d6a73;
+      transform: translateY(-1px);
+    }
+    .refresh-btn:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .refresh-btn .spinner-small {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
@@ -85,6 +136,12 @@
     </div>
 
     <div id="content" class="hidden">
+      <div class="refresh-bar">
+        <span class="refresh-status" id="refreshStatus">Dernière mise à jour : maintenant</span>
+        <button class="refresh-btn" id="refreshBtn" onclick="manualRefresh()">
+          🔄 Actualiser
+        </button>
+      </div>
       <div class="chart-wrapper">
         <canvas id="radarChart"></canvas>
       </div>
@@ -107,6 +164,14 @@
     
     // Récupère l'email depuis l'URL (passé par Moodle via {email})
     var userEmail = getUrlParameter('email');
+    
+    // Variables globales pour le refresh
+    var radarChart = null;
+    var lastDataHash = null;
+    var autoRefreshInterval = null;
+    var autoRefreshCount = 0;
+    var AUTO_REFRESH_DELAY = 30000; // 30 secondes
+    var AUTO_REFRESH_MAX = 10; // Arrêter après 10 tentatives (5 minutes)
     
     // Configuration des leviers (doit correspondre aux en-têtes de ta feuille Scores)
     var LEVERS = [
@@ -253,8 +318,17 @@
     }
 
     function drawRadar(labels, data) {
+      // Si le graphique existe déjà, le mettre à jour
+      if (radarChart) {
+        radarChart.data.labels = labels;
+        radarChart.data.datasets[0].data = data;
+        radarChart.update();
+        return;
+      }
+      
+      // Sinon, créer un nouveau graphique
       var ctx = document.getElementById('radarChart').getContext('2d');
-      new Chart(ctx, {
+      radarChart = new Chart(ctx, {
         type: 'radar',
         data: {
           labels: labels,
@@ -305,7 +379,173 @@
       div.innerText = "Erreur : " + msg;
       div.classList.remove('hidden');
     }
+
+    // =============================================================================
+    // FONCTIONS DE MISE À JOUR AUTOMATIQUE
+    // =============================================================================
+
+    function manualRefresh() {
+      var btn = document.getElementById('refreshBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-small"></span> Actualisation...';
+      
+      updateStatus("Actualisation en cours...", true);
+      
+      refreshData(function() {
+        btn.disabled = false;
+        btn.innerHTML = '🔄 Actualiser';
+      });
+    }
+
+    function refreshData(callback) {
+      Papa.parse(SHEET_CSV_URL, {
+        download: true,
+        header: false,
+        complete: function(results) {
+          processDataForRefresh(results.data);
+          if (callback) callback();
+        },
+        error: function(err) {
+          updateStatus("Erreur de mise à jour", false);
+          if (callback) callback();
+        }
+      });
+    }
+
+    function processDataForRefresh(data) {
+      if (!data || data.length < 4) {
+        updateStatus("Données insuffisantes", false);
+        return;
+      }
+
+      var headers = data[0];
+      var emailColIndex = findEmailColumn(headers);
+      
+      if (emailColIndex === -1) {
+        updateStatus("Erreur de configuration", false);
+        return;
+      }
+
+      // Chercher la ligne de l'utilisateur
+      var studentRow = null;
+      for (var i = data.length - 1; i >= 3; i--) {
+        var row = data[i];
+        if (row[emailColIndex] && row[emailColIndex].toString().trim().toLowerCase() === userEmail.trim().toLowerCase()) {
+          studentRow = row;
+          break;
+        }
+      }
+
+      if (!studentRow) {
+        // Pas encore de données - afficher welcome si pas déjà affiché
+        if (!document.getElementById('welcome').classList.contains('hidden')) {
+          updateStatus("En attente de vos résultats...", false);
+        }
+        return;
+      }
+
+      // Calculer un hash simple pour détecter les changements
+      var newHash = studentRow.join('|');
+      
+      if (newHash === lastDataHash) {
+        // Pas de changement
+        updateStatus("Aucune nouvelle donnée", false);
+        return;
+      }
+
+      // Nouvelles données détectées !
+      lastDataHash = newHash;
+
+      // Agréger les scores par levier
+      var leverScores = {};
+      LEVERS.forEach(function(l) { leverScores[l.label] = 0; });
+
+      for (var col = 0; col < headers.length; col++) {
+        var headerName = headers[col] ? headers[col].toString().trim() : "";
+        if (leverScores.hasOwnProperty(headerName)) {
+          var val = parseFloat(studentRow[col]) || 0;
+          leverScores[headerName] += val;
+        }
+      }
+
+      // Préparer les résultats
+      var results = LEVERS.map(function(l) {
+        var score = Math.round(leverScores[l.label]);
+        if (score > 100) score = 100;
+        if (score < 0) score = 0;
+        return { label: l.label, score: score };
+      });
+
+      // Mettre à jour l'affichage
+      var dateStr = studentRow[0] || "Date inconnue";
+      
+      // Si on vient du welcome, afficher le content
+      if (!document.getElementById('content').classList.contains('hidden') === false) {
+        document.getElementById('welcome').classList.add('hidden');
+        document.getElementById('content').classList.remove('hidden');
+      }
+      
+      showResults(results, dateStr);
+      updateStatus("Mis à jour !", false);
+      
+      // Arrêter l'auto-refresh si on a trouvé des données
+      if (autoRefreshInterval && !document.getElementById('welcome').classList.contains('hidden')) {
+        // Continuer l'auto-refresh même après avoir trouvé des données
+        // pour détecter les mises à jour futures
+      }
+    }
+
+    function updateStatus(message, isUpdating) {
+      var status = document.getElementById('refreshStatus');
+      status.textContent = message;
+      status.className = isUpdating ? 'refresh-status updating' : 'refresh-status';
+      
+      // Réinitialiser le message après quelques secondes
+      if (!isUpdating) {
+        setTimeout(function() {
+          var now = new Date();
+          status.textContent = "Dernière vérification : " + now.toLocaleTimeString('fr-FR');
+        }, 2000);
+      }
+    }
+
+    function startAutoRefresh() {
+      // Démarrer l'auto-refresh
+      autoRefreshInterval = setInterval(function() {
+        autoRefreshCount++;
+        
+        if (autoRefreshCount >= AUTO_REFRESH_MAX) {
+          stopAutoRefresh();
+          updateStatus("Auto-refresh arrêté", false);
+          return;
+        }
+        
+        updateStatus("Vérification automatique...", true);
+        refreshData(function() {
+          // Callback après refresh
+        });
+      }, AUTO_REFRESH_DELAY);
+    }
+
+    function stopAutoRefresh() {
+      if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+      }
+    }
+
+    // Démarrer l'auto-refresh au chargement de la page
+    window.addEventListener('load', function() {
+      // Petit délai pour laisser le temps au premier chargement
+      setTimeout(function() {
+        startAutoRefresh();
+      }, 5000);
+    });
+
+    // Arrêter l'auto-refresh quand l'utilisateur quitte la page
+    window.addEventListener('beforeunload', function() {
+      stopAutoRefresh();
+    });
   </script>
 </body>
 </html>
-
